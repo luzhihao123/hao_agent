@@ -1,5 +1,5 @@
 import os
-from dotenv import load_dotenv
+
 import gradio as gr
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -7,7 +7,7 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import LLMChain
 
 # ========== 1. 加载配置 ==========
-load_dotenv()
+
 
 # 读取人设档案
 with open("persona.md", "r", encoding="utf-8") as f:
