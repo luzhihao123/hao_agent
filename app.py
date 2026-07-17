@@ -1,117 +1,73 @@
 import os
-
 import gradio as gr
 from langchain.chat_models import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.memory import ConversationBufferMemory
-from langchain.chains import LLMChain
+from langchain.memory import ConversationBufferWindowMemory
+from langchain.chains import ConversationChain
+from langchain.prompts import PromptTemplate
 
-# ========== 1. 加载配置 ==========
-
-
-# 读取人设档案
+# 读取人设
 with open("persona.md", "r", encoding="utf-8") as f:
     persona = f.read()
 
-# ========== 2. 系统提示词 ==========
-SYSTEM_PROMPT = f"""你现在需要【完全扮演用户本人】，模拟他的说话方式、思维习惯和语气。
-
-## 人设档案
+prompt_template = f"""
+你正在完全模仿一个叫浩的男生，以下是他的人设：
 {persona}
 
-## 严格扮演规则
-1. 语言风格：严格按照上面的说话方式，用口语化表达，不要书面语、不要官方腔
-2. 回答长度：像真人聊天一样，短句为主，不要写小作文
-3. 知识边界：人设里不懂的领域，就说"这个我不太懂"或者糊弄过去，别瞎编
-4. 性格一致：保持理性、直接、偶尔敷衍的感觉
-5. 绝对禁止：说"作为AI"、"我是人工智能"、"我来帮你"这类暴露身份的话
-6. 记忆连贯：记住之前的对话内容，前后要一致
-7. 不要太热情、不要太礼貌，就是正常朋友聊天的感觉
+规则必须严格遵守：
+1. 只回答关于他本人的信息、项目、经历、爱好、性格。
+2. 专业知识只回答大概，一知半解，不深入讲解。
+3. 任何不懂、太难、和本人无关的问题，统一回答：
+   “这个我也不知道，你可以问问豆包。”
+4. 绝不编造内容，绝不瞎解释。
+5. 说话口语化、简短自然，像真人聊天。
+6. 记住之前的对话内容，保持上下文连贯。
 
-记住：你不是AI助手，你就是【用户本人】，用他的方式回复每一句话。
+对话历史：
+{{history}}
+
+用户：{{input}}
+你（模仿浩回答）：
 """
 
-# ========== 3. 初始化 Agent ==========
-def create_agent():
-    llm = ChatOpenAI(
-        temperature=0.85,
-        model="gpt-3.5-turbo",
-        max_tokens=500
-    )
-    
-    memory = ConversationBufferMemory(
-        memory_key="history",
-        return_messages=True
-    )
-    
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
-        MessagesPlaceholder(variable_name="history"),
-        ("human", "{input}")
-    ])
-    
-    chain = LLMChain(
-        llm=llm,
-        prompt=prompt,
-        memory=memory,
-        verbose=False
-    )
-    
-    return chain
+prompt = PromptTemplate(
+    input_variables=["history", "input"],
+    template=prompt_template
+)
 
-agent = create_agent()
+# ====================== DeepSeek 正式接入 ======================
+llm = ChatOpenAI(
+    model_name="deepseek-chat",
+    openai_api_key=os.getenv("DEEPSEEK_API_KEY"),
+    openai_api_base="https://api.deepseek.com/v1",
+    temperature=0.3,
+    max_tokens=512
+)
 
-# ========== 4. 聊天函数 ==========
-def chat(message, history):
-    try:
-        response = agent.run(message)
-        return response
-    except Exception as e:
-        return f"（出问题了：{str(e)}）"
+# 保留20轮对话记忆
+memory = ConversationBufferWindowMemory(k=20)
 
-# ========== 5. 构建网页界面 ==========
-with gr.Blocks(title="我的数字分身", theme=gr.themes.Soft()) as demo:
-    gr.Markdown("""
-    # 🤖 我的数字分身
-    和"我"聊聊天，看看像不像
-    """)
-    
-    chatbot = gr.Chatbot(
-        height=500,
-        bubble_full_width=False
+chain = ConversationChain(
+    llm=llm,
+    prompt=prompt,
+    memory=memory,
+    verbose=False
+)
+
+def chat_fn(message, history):
+    return chain.predict(input=message)
+
+# 界面
+with gr.Blocks(title="我的数字分身") as demo:
+    gr.Markdown("# 浩 · AI数字分身（DeepSeek版）")
+    gr.ChatInterface(
+        fn=chat_fn,
+        submit_btn="发送",
+        retry_btn="重新回答",
+        clear_btn="清空对话"
     )
-    
-    msg = gr.Textbox(
-        placeholder="说点什么...",
-        show_label=False,
-        container=False
-    )
-    
-    clear = gr.Button("清空对话（重置记忆）")
-    
-    def respond(message, chat_history):
-        bot_message = chat(message, chat_history)
-        chat_history.append((message, bot_message))
-        return "", chat_history
-    
-    msg.submit(respond, [msg, chatbot], [msg, chatbot])
-    
-    def clear_chat():
-        global agent
-        agent = create_agent()
-        return None
-    
-    clear.click(clear_chat, None, chatbot)
-    
-    gr.Markdown("""
-    💡 提示：人设越详细、说话示例越多，模拟得越像。
-    """)
 
-# ========== 6. 启动（适配Render） ==========
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 7860))
     demo.launch(
         server_name="0.0.0.0",
-        server_port=port,
-        share=False
+        server_port=int(os.environ.get("PORT", 7860))
     )
